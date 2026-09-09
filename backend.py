@@ -1,7 +1,10 @@
 """S3 objects and prefixes, with conditional object writes."""
+import io
 import posixpath
 from contextlib import contextmanager
 from urllib.parse import urlsplit
+
+from helpers.file_transfers import copy_stream
 
 
 class Provider:
@@ -80,23 +83,19 @@ class S3:
                 return entry
         raise FileNotFoundError(relative)
 
-    def read(self, relative, limit):
+    def read(self, relative, destination, limit):
         result = self.client.get_object(Bucket=self.bucket, Key=self.key(relative))
         with result["Body"] as stream:
-            if result["ContentLength"] > limit:
-                raise ValueError("File exceeds the size limit.")
-            data = stream.read(limit + 1)
-        if len(data) > limit:
-            raise ValueError("File exceeds the size limit.")
-        return data, {"etag": result["ETag"]}
+            copy_stream(stream, destination, limit)
+        return {"etag": result["ETag"]}
 
-    def write(self, relative, content, expected=None):
+    def write(self, relative, source, expected=None):
         condition = {"IfNoneMatch": "*"} if expected is None else {"IfMatch": expected["etag"]}
-        result = self.client.put_object(Bucket=self.bucket, Key=self.key(relative), Body=content, **condition)
+        result = self.client.put_object(Bucket=self.bucket, Key=self.key(relative), Body=source, **condition)
         return {"etag": result["ETag"]}
 
     def mkdir(self, relative):
-        self.write(relative.rstrip("/") + "/", b"")
+        self.write(relative.rstrip("/") + "/", io.BytesIO())
 
     def rename(self, source, destination):
         raise ValueError("S3 has no atomic rename. Download and upload objects to a new key instead.")
